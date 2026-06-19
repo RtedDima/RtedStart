@@ -8,6 +8,16 @@ A local service manager with a GUI. Handy when you need to keep multiple process
 ![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green)
 ![Windows](https://img.shields.io/badge/platform-Windows-lightgrey)
 
+<table>
+  <tr>
+    <td>
+      <img src="https://github.com/user-attachments/assets/f3893488-88f0-4902-a4e3-a2ca8757e954" alt="S1" width="100%"/>
+    </td>
+    <td>
+      <img src="https://github.com/user-attachments/assets/c8e94fd6-fd35-4583-9029-2f3ed98cdc0f" alt="S2" width="100%"/>
+    </td>
+  </tr>
+</table>
 ---
 
 ## Возможности / Features
