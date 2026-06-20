@@ -1,5 +1,7 @@
-import sys, os, json, re, time, subprocess, fnmatch, argparse
+import sys, os, json, re, time, subprocess, fnmatch, argparse, signal
 from pathlib import Path
+
+WIN = sys.platform == 'win32'
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QPlainTextEdit, QPushButton, QLabel, QLineEdit, QCheckBox, QListWidget,
@@ -210,7 +212,7 @@ class HomeTab(QWidget):
         lo.setSpacing(8)
 
         hdr = QLabel('Services')
-        hdr.setFont(QFont('Segoe UI', 14, QFont.Weight.Bold))
+        hdr.setFont(QFont('Segoe UI' if WIN else 'sans-serif', 14, QFont.Weight.Bold))
         hdr.setStyleSheet('color:#e5e5e5;')
         lo.addWidget(hdr)
 
@@ -397,9 +399,26 @@ class ServiceTab(QWidget):
         self.out = QPlainTextEdit()
         self.out.setReadOnly(True)
         self.out.setMaximumBlockCount(5000)
-        self.out.setFont(QFont('Consolas', 9))
+        self.out.setFont(QFont('Consolas' if WIN else 'Monospace', 9))
         self.out.setStyleSheet('background:#1e1e1e;color:#d4d4d4;')
         sp.addWidget(self.out)
+
+        irow = QHBoxLayout()
+        self.inp_stdin = QLineEdit()
+        self.inp_stdin.setPlaceholderText('stdin...')
+        self.inp_stdin.setFont(QFont('Consolas' if WIN else 'Monospace', 9))
+        self.inp_stdin.returnPressed.connect(self._send_stdin)
+        self.inp_stdin.setEnabled(False)
+        btn_send = QPushButton('Send')
+        btn_send.setFixedWidth(50)
+        btn_send.clicked.connect(self._send_stdin)
+        self.btn_send = btn_send
+        iw = QWidget()
+        iw.setLayout(irow)
+        irow.setContentsMargins(0, 0, 0, 0)
+        irow.addWidget(self.inp_stdin)
+        irow.addWidget(btn_send)
+        sp.addWidget(iw)
 
         box = QGroupBox('Exclusions')
         bl = QVBoxLayout(box)
@@ -418,7 +437,8 @@ class ServiceTab(QWidget):
         bl.addLayout(eb)
         sp.addWidget(box)
         sp.setStretchFactor(0, 3)
-        sp.setStretchFactor(1, 1)
+        sp.setStretchFactor(1, 0)
+        sp.setStretchFactor(2, 1)
         lo.addWidget(sp)
 
         self.lbl_st = QLabel('Stopped')
@@ -492,11 +512,14 @@ class ServiceTab(QWidget):
         env = os.environ.copy()
         env.update({'FORCE_COLOR': '1', 'CLICOLOR_FORCE': '1', 'PYTHONUNBUFFERED': '1'})
         env.update(self._cfg.get('env', {}))
+        kw = dict(cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                  stderr=subprocess.STDOUT, shell=True, env=env)
+        if WIN:
+            kw['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            kw['preexec_fn'] = os.setsid
         try:
-            self._proc = subprocess.Popen(
-                cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                shell=True, env=env, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-            )
+            self._proc = subprocess.Popen(cmd, **kw)
         except Exception as e:
             self._log(f'\x1b[31mFailed: {e}\x1b[0m')
             self._set_btns(False)
@@ -518,11 +541,14 @@ class ServiceTab(QWidget):
         pid = self._proc.pid
         self._log(f'\x1b[33m--- Stopping PID {pid}\x1b[0m')
         try:
-            subprocess.Popen(
-                ['taskkill', '/F', '/T', '/PID', str(pid)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
+            if WIN:
+                subprocess.Popen(
+                    ['taskkill', '/F', '/T', '/PID', str(pid)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+            else:
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
         except Exception: pass
         self._proc = None
         self._t0 = None
@@ -590,6 +616,8 @@ class ServiceTab(QWidget):
         self.btn_go.setEnabled(not on)
         self.btn_kill.setEnabled(on)
         self.btn_re.setEnabled(on)
+        self.inp_stdin.setEnabled(on)
+        self.btn_send.setEnabled(on)
         if on and self._proc:
             self.lbl_st.setText(f'PID {self._proc.pid}')
 
@@ -597,6 +625,18 @@ class ServiceTab(QWidget):
         if self._t0 and self._proc and self._proc.poll() is None:
             e = int(time.time() - self._t0)
             self.lbl_st.setText(f'PID {self._proc.pid} | {e//3600:02d}:{e%3600//60:02d}:{e%60:02d}')
+
+    def _send_stdin(self):
+        if not self._proc or self._proc.poll() is not None:
+            return
+        text = self.inp_stdin.text()
+        self.inp_stdin.clear()
+        self._log(f'\x1b[33m> {text}\x1b[0m')
+        try:
+            self._proc.stdin.write((text + '\n').encode())
+            self._proc.stdin.flush()
+        except Exception:
+            pass
 
     def _field_changed(self):
         self._save_cfg()
